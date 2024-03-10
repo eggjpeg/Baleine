@@ -1,50 +1,27 @@
 from typing import Union, Optional, Tuple, List, Any
 import numpy as np
-from qiskit import QuantumCircuit
+from qiskit import Aer
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, execute
 from qiskit.circuit.library import Isometry, Initialize
 from scipy.stats import expon
 import matplotlib.pyplot as plt
 from qiskit.visualization import plot_histogram
-
-def _check_dimensions_match(num_qubits, lambd, bounds):
-    num_qubits = [num_qubits] if not isinstance(num_qubits, (list, np.ndarray)) else num_qubits
-    dim = len(num_qubits)
-
-    if lambd is not None:
-        lambd = [lambd] if not isinstance(lambd, (list, np.ndarray)) else lambd
-        if len(lambd) != dim:
-            raise ValueError(
-                f"Dimension of lambd ({len(lambd)}) does not match the dimension of the "
-                f"random variable specified by the number of qubits ({dim})"
-            )
-
-    if bounds is not None:
-        bounds = [bounds] if not isinstance(bounds[0], tuple) else bounds
-        if len(bounds) != dim:
-            raise ValueError(
-                f"Dimension of bounds ({len(bounds)}) does not match the dimension of the "
-                f"random variable specified by the number of qubits ({dim})"
-            )
+import math
 
 def _check_bounds_valid(bounds):
     if bounds is None:
         return
 
-    bounds = [bounds] if not isinstance(bounds[0], tuple) else bounds
 
-    for i, bound in enumerate(bounds):
-        if not bound[1] - bound[0] > 0:
-            raise ValueError(
-                f"Dimension {i} of the bounds are invalid, must be a non-empty "
-                "interval where the lower bounds is smaller than the upper bound."
-            )
+
 
 class ExponentialDistribution(QuantumCircuit):
     def __init__(
         self,
-        num_qubits: Union[int, List[int]],
-        lambd: Optional[Union[float, List[float]]] = None,
-        bounds: Optional[Union[Tuple[float, float], List[Tuple[float, float]]]] = None,
+        num_qubits: int,
+        lambd: Optional[float] = None,
+        bounds: Optional[Union[Tuple[float, float]]] = None,
+        xnot: Optional[float] = None,
         upto_diag: bool = False,
         name: str = "P(X)",
     ) -> None:
@@ -59,43 +36,59 @@ class ExponentialDistribution(QuantumCircuit):
             bounds: The truncation bounds of the distribution as tuples. For multiple dimensions,
                 ``bounds`` is a list of tuples ``[(low0, high0), (low1, high1), ...]``.
                 If ``None``, the bounds are set to ``(-1, 1)`` for each dimension.
+            xnot: The value that we choose to begin plotting at.
             upto_diag: If True, load the square root of the probabilities up to multiplication
                 with a diagonal for a more efficient circuit.
             name: The name of the circuit.
         """
-        _check_dimensions_match(num_qubits, lambd, bounds)
         _check_bounds_valid(bounds)
 
         # set default arguments
-        dim = 1 if isinstance(num_qubits, int) else len(num_qubits)
         if lambd is None:
-            lambd = 1 if dim == 1 else [1] * dim
-
+            lambd = 1 
+        if lambd <= 0:
+            raise ValueError("Lambd must be positive")
         if bounds is None:
-            bounds = (-1, 1) if dim == 1 else [(-1, 1)] * dim
+            bounds = (0,-np.log(0.01) / lambd)
+        if xnot is None:
+            xnot = (bounds[1] + bounds[0]) / 2
+        if xnot > bounds[1] or xnot < bounds[0]:
+            raise ValueError("xnot must be within the bounds!")
+        
 
-        if isinstance(num_qubits, int):  # univariate case
-            inner = QuantumCircuit(num_qubits, name=name)
+        inner = QuantumCircuit(num_qubits, name=name)
 
-            x = np.linspace(bounds[0], bounds[1], num=2**num_qubits)  # type: Any
-        else:  # multivariate case
-            inner = QuantumCircuit(sum(num_qubits), name=name)
+        #xp = np.array(np.linspace(xnot, bounds[1], num=int((2**num_qubits) / 2)))  # type: Any
+        #xn = np.negative(np.flip(xp))
+        #x = np.concatenate([xn,xp])
 
-            # compute the evaluation points using numpy.meshgrid
-            # indexing 'ij' yields the "column-based" indexing
-            meshgrid = np.meshgrid(
-                *[
-                    np.linspace(bound[0], bound[1], num=2 ** num_qubits[i])  # type: ignore
-                    for i, bound in enumerate(bounds)
-                ],
-                indexing="ij",
-            )
-            # flatten into a list of points
-            x = list(zip(*[grid.flatten() for grid in meshgrid]))
 
-        # compute the normalized, truncated probabilities
-        probabilities = expon.pdf(x, scale=1/np.array(lambd))
-        print(probabilities)
+        x = np.array(np.linspace(bounds[0], bounds[1], num=int((2**num_qubits)) ))  # type: Any
+
+        # We get the first and second half of x values before x not and after
+        xFirstHalf = x[x <= xnot]
+        xSecondHalf = x[x > xnot]
+
+        # We check to see if the first half or second half is larger, depending on xnot
+        if(len(xFirstHalf) > len(xSecondHalf)):
+            # We calculate the probabilities before xnot, we must flip the first half to do this
+            probabilitiesn = lambd * np.exp(-lambd*(np.flip(xFirstHalf) - xnot))
+            # We then flip to get the probabilties after xnot, now the size of this array will be too large so we must truncate it after
+            probabilitiesp = np.flip(probabilitiesn)
+        else:
+            # In this case we must flip the probabilities before xnot and truncate them at the point that we want
+            probabilitiesp = lambd * np.exp(-lambd*(xSecondHalf - xnot))
+            probabilitiesn = np.flip(probabilitiesp[:len(xFirstHalf)])
+            
+        
+        probabilities = np.concatenate([probabilitiesn,probabilitiesp])
+
+        #We truncate here for the first case, the second case is unaffected by this
+        probabilities = probabilities[:len(x)]
+
+        # Note:
+        # I end up having 2 probabilities at xnot because of the flip, how to fix?
+
         normalized_probabilities = probabilities / np.sum(probabilities)
 
         # store the values, probabilities and bounds to make them user accessible
@@ -126,13 +119,23 @@ class ExponentialDistribution(QuantumCircuit):
         return self._probabilities
 
     @property
-    def bounds(self) -> Union[Tuple[float, float], List[Tuple[float, float]]]:
-        """Return the bounds of the probability distribution."""
+    def bounds(self) ->  Optional[Union[Tuple[float, float]]]:
+        """Return the bounds of the probability distribution.   """
         return self._bounds
 
 
-# Test the values property
-exp_dist = ExponentialDistribution(5, lambd=1.5, bounds=(0, 2))
+#######################################################################################################################################
+    
+def get_loss(sigma, bounds) -> float:
+    return math.exp(-sigma * abs(bounds[1] - bounds[0]))
+
+exp_dist = ExponentialDistribution(7, lambd=2, bounds= (-4,4), xnot=2)
+
+leak = QuantumCircuit(1)
+sigma = 1
+loss = get_loss(sigma,exp_dist.bounds)
+print(loss)
+
 
 print("Values:")
 print(exp_dist.values)
@@ -147,11 +150,11 @@ print(exp_dist.bounds)
 
 
 # Visualize the histogram of the probabilities
-plt.bar(exp_dist.values, exp_dist.probabilities)
+plt.plot(exp_dist.values, exp_dist.probabilities)
 plt.xlabel('Values')
 plt.ylabel('Probabilities')
 plt.title('Histogram of Exponential Distribution')
 plt.show()
 
 # Plot the quantum circuit
-exp_dist.decompose().draw(output='mpl',filename="face.png")
+exp_dist.decompose(reps=8).draw(output='mpl',filename="face.png")
