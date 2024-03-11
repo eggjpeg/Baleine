@@ -73,21 +73,17 @@ class ExponentialDistribution(QuantumCircuit):
         if(len(xFirstHalf) > len(xSecondHalf)):
             # We calculate the probabilities before xnot, we must flip the first half to do this
             probabilitiesn = lambd * np.exp(-lambd*(np.flip(xFirstHalf) - xnot))
-            # We then flip to get the probabilties after xnot, now the size of this array will be too large so we must truncate it after
-            probabilitiesp = np.flip(probabilitiesn)
+
+            # We then flip to get the probabilties after xnot, truncating as needed
+            probabilitiesp = np.flip(probabilitiesn[:-1])[:len(xSecondHalf)]
         else:
-            # In this case we must flip the probabilities before xnot and truncate them at the point that we want
+            # In this case we must obtain the probabiltiies after xnot
             probabilitiesp = lambd * np.exp(-lambd*(xSecondHalf - xnot))
-            probabilitiesn = np.flip(probabilitiesp[:len(xFirstHalf)])
-            
-        
+
+            # We flip the probabilities to obtain the probabilities before xnot, truncating them as needed
+            probabilitiesn = np.flip(probabilitiesp[1:][:len(xFirstHalf)])
+
         probabilities = np.concatenate([probabilitiesn,probabilitiesp])
-
-        #We truncate here for the first case, the second case is unaffected by this
-        probabilities = probabilities[:len(x)]
-
-        # Note:
-        # I end up having 2 probabilities at xnot because of the flip, how to fix?
 
         normalized_probabilities = probabilities / np.sum(probabilities)
 
@@ -129,7 +125,7 @@ class ExponentialDistribution(QuantumCircuit):
 def get_loss(sigma, bounds) -> float:
     return math.exp(-sigma * abs(bounds[1] - bounds[0]))
 
-exp_dist = ExponentialDistribution(7, lambd=2, bounds= (-4,4), xnot=2)
+exp_dist = ExponentialDistribution(7, lambd=2, bounds= (-4,4), xnot=-2)
 
 leak = QuantumCircuit(1)
 sigma = 1
