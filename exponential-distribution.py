@@ -13,7 +13,12 @@ def _check_bounds_valid(bounds):
         return
 
 
-
+def get_leak_right( sigma, bounds,xnot) -> float:
+        return math.exp( -sigma * abs(bounds[1] - xnot))
+def get_leak_left( sigma, bounds,xnot) -> float:
+        return math.exp( -sigma * abs(bounds[0] - xnot))
+def get_total_leak( leak_left, leak_right) -> float:
+        return 0.5 * ( leak_left + leak_right)
 
 class ExponentialDistribution(QuantumCircuit):
     def __init__(
@@ -22,6 +27,7 @@ class ExponentialDistribution(QuantumCircuit):
         lambd: Optional[float] = None,
         bounds: Optional[Union[Tuple[float, float]]] = None,
         xnot: Optional[float] = None,
+        sigma: Optional[float] = None,
         upto_diag: bool = False,
         name: str = "P(X)",
     ) -> None:
@@ -37,6 +43,7 @@ class ExponentialDistribution(QuantumCircuit):
                 ``bounds`` is a list of tuples ``[(low0, high0), (low1, high1), ...]``.
                 If ``None``, the bounds are set to ``(-1, 1)`` for each dimension.
             xnot: The value that we choose to begin plotting at.
+            sigma: The value with which leakage will be calculated
             upto_diag: If True, load the square root of the probabilities up to multiplication
                 with a diagonal for a more efficient circuit.
             name: The name of the circuit.
@@ -84,13 +91,13 @@ class ExponentialDistribution(QuantumCircuit):
             probabilitiesn = np.flip(probabilitiesp[1:][:len(xFirstHalf)])
 
         probabilities = np.concatenate([probabilitiesn,probabilitiesp])
-
         normalized_probabilities = probabilities / np.sum(probabilities)
 
         # store the values, probabilities and bounds to make them user accessible
         self._values = x
         self._probabilities = normalized_probabilities
         self._bounds = bounds
+        
 
         super().__init__(*inner.qregs, name=name)
 
@@ -104,6 +111,22 @@ class ExponentialDistribution(QuantumCircuit):
             inner.compose(circuit, inplace=True)
             self.append(inner.to_gate(), inner.qubits)
 
+        #Calculate leakage probability
+        left_leakage = get_leak_left(sigma,bounds,xnot)
+        right_leakage = get_leak_right(sigma,bounds,xnot)
+        leakage = get_total_leak(left_leakage,right_leakage)
+
+        #Calculate distributed integral
+        dis_integral = np.trapz(self.probabilities, self.values)
+
+        self._probabilities *= (1 - leakage) / dis_integral
+        self._leakage = leakage
+
+
+        dis_integral = np.trapz(self.probabilities, self.values)
+        self._distributed_integral = dis_integral
+
+        # dis_integral + leakage should always = 1
     @property
     def values(self) -> np.ndarray:
         """Return the discretized points of the random variable."""
@@ -118,27 +141,37 @@ class ExponentialDistribution(QuantumCircuit):
     def bounds(self) ->  Optional[Union[Tuple[float, float]]]:
         """Return the bounds of the probability distribution.   """
         return self._bounds
+    @property
+    def leakage(self) ->  Optional[float]:
+        """Return the bounds of the probability distribution.   """
+        return self._leakage
+    @property
+    def distributed_integral(self) ->  Optional[float]:
+        """Return the bounds of the probability distribution.   """
+        return self._distributed_integral
+    
+    
+    
 
 
 #######################################################################################################################################
     
-def get_loss(sigma, bounds) -> float:
-    return math.exp(-sigma * abs(bounds[1] - bounds[0]))
 
-exp_dist = ExponentialDistribution(7, lambd=2, bounds= (-4,4), xnot=-2)
+qubits = 7
 
-leak = QuantumCircuit(1)
-sigma = 1
-loss = get_loss(sigma,exp_dist.bounds)
-print(loss)
+for i in range(-1 * int((2**qubits) / 2), int((2**qubits)/2)):
+    exp_dist = ExponentialDistribution(num_qubits=qubits, lambd=2, xnot=i, bounds= (-4,4), sigma=1)
 
 
-print("Values:")
-print(exp_dist.values)
+
+
+
+#print("Values:")
+#print(exp_dist.values)
 
 # Test the probabilities property
-print("\nProbabilities:")
-print(exp_dist.probabilities)
+#print("\nProbabilities:")
+#print(exp_dist.probabilities)
 
 # Test the bounds property
 print("\nBounds:")
