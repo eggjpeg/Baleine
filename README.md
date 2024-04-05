@@ -1,1 +1,3 @@
-# Qiskit-Nuclear
+# Baleine 
+ 
+Baleine is a project that attempts to simulate a particle's position after any number of flights that it may make. We assume that the particle can scatter in two directions at an equal chance. We use Quantum Circuits in Qiskit to our advantage to be able to calculate this quickly. A particle's position can be estimated using an exponential distribution which is discretized on some number of qubits. This project is ongoing and unfinished.

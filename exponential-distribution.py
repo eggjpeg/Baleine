@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 from qiskit.visualization import plot_histogram
 import math
 
+from qiskit import transpile
+from qiskit.providers.fake_provider import GenericBackendV2
+
 def _check_bounds_valid(bounds):
     if bounds is None:
         return
@@ -75,7 +78,8 @@ class ExponentialDistribution(QuantumCircuit):
         # We get the first and second half of x values before x not and after
         xFirstHalf = x[x <= xnot]
         xSecondHalf = x[x > xnot]
-
+        print(len(xFirstHalf))
+        print(len(xSecondHalf))
         # We check to see if the first half or second half is larger, depending on xnot
         if(len(xFirstHalf) > len(xSecondHalf)):
             # We calculate the probabilities before xnot, we must flip the first half to do this
@@ -83,21 +87,32 @@ class ExponentialDistribution(QuantumCircuit):
 
             # We then flip to get the probabilties after xnot, truncating as needed
             probabilitiesp = np.flip(probabilitiesn[:-1])[:len(xSecondHalf)]
-        else:
+        elif(len(xFirstHalf) < len(xSecondHalf)): 
             # In this case we must obtain the probabiltiies after xnot
             probabilitiesp = lambd * np.exp(-lambd*(xSecondHalf - xnot))
-
+            print("probabilities p: ", len(probabilitiesp))
             # We flip the probabilities to obtain the probabilities before xnot, truncating them as needed
             probabilitiesn = np.flip(probabilitiesp[1:][:len(xFirstHalf)])
+            print("probabilities n: ", len(probabilitiesn))
+        else: # Middle value duplicates
+            probabilitiesn = np.flip(lambd * np.exp(-lambd*(xFirstHalf - xnot)))
+            print(len(probabilitiesn))
+            probabilitiesp = np.flip(probabilitiesn)
+
+
 
         probabilities = np.concatenate([probabilitiesn,probabilitiesp])
         normalized_probabilities = probabilities / np.sum(probabilities)
 
-        # store the values, probabilities and bounds to make them user accessible
+        # store the values, probabilities and boun  ds to make them user accessible
         self._values = x
         self._probabilities = normalized_probabilities
         self._bounds = bounds
-        
+        print("xnot is ",xnot)
+        print("Probabilities before:", len(probabilitiesn))
+        print("Probabilities after:", len(probabilitiesp))
+
+        print("Probabilities:", len(probabilities),probabilities)
 
         super().__init__(*inner.qregs, name=name)
 
@@ -157,10 +172,19 @@ class ExponentialDistribution(QuantumCircuit):
 #######################################################################################################################################
     
 
-qubits = 7
-
-for i in range(-1 * int((2**qubits) / 2), int((2**qubits)/2)):
-    exp_dist = ExponentialDistribution(num_qubits=qubits, lambd=2, xnot=i, bounds= (-4,4), sigma=1)
+qubits = 5
+bounds = [-4, 4]
+x = np.array(np.linspace(bounds[0], bounds[1], num=int((2**qubits)) ))  # type: Any
+print(x)
+for c in range(1): # Number of convolutions 
+    for i in x:
+#print(i)
+        exp_dist = ExponentialDistribution(num_qubits=qubits, lambd=2, xnot=i, bounds= bounds, sigma=1)
+        plt.plot(exp_dist.values, exp_dist.probabilities)
+        plt.xlabel('Values')
+        plt.ylabel('Probabilities')
+        plt.title('Histogram of Exponential Distribution')
+        plt.show()
 
 
 
@@ -179,11 +203,11 @@ print(exp_dist.bounds)
 
 
 # Visualize the histogram of the probabilities
-plt.plot(exp_dist.values, exp_dist.probabilities)
-plt.xlabel('Values')
-plt.ylabel('Probabilities')
-plt.title('Histogram of Exponential Distribution')
-plt.show()
+
 
 # Plot the quantum circuit
+#backend = GenericBackendV2(5)
+
+#qc_basis = transpile(exp_dist, backend)
+
 exp_dist.decompose(reps=8).draw(output='mpl',filename="face.png")
